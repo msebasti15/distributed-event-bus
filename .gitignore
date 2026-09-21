@@ -1,0 +1,9 @@
+# IDE metadata
+.idea/
+
+# Go build artifacts
+/bin/
+*.test
+
+# Local demo/build output
+*.log
