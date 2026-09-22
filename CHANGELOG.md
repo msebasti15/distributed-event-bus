@@ -17,7 +17,7 @@ pub/sub prototype; durable replication and recovery are not implemented yet.
 - Add TLS, authentication, and authorization for the HTTP control plane.
 - Add GitHub Actions for formatting, tests, race detection, and static checks.
 
-## [0.1.3] - 2026-09-22
+## [0.1.2] - 2026-09-22
 
 ### Documentation
 
@@ -26,7 +26,7 @@ pub/sub prototype; durable replication and recovery are not implemented yet.
 - Added ADRs for TCP transport, bounded queues, and client-side failover.
 - Linked the evolution documentation from the README.
 
-## [0.1.2] - 2026-09-22
+## [0.1.1] - 2026-09-22
 
 ### Documentation
 
@@ -34,13 +34,6 @@ pub/sub prototype; durable replication and recovery are not implemented yet.
   delivery guarantees, and the evolution path.
 - Documented why the current standby behavior is client failover rather than
   broker replication.
-
-## [0.1.1] - 2026-09-21
-
-### Repository hygiene
-
-- Removed IntelliJ/GoLand project metadata from version control.
-- Added `.gitignore` rules for IDE metadata, build artifacts, and local logs.
 
 ## [0.1.0] - 2026-09-21
 
@@ -68,7 +61,6 @@ pub/sub prototype; durable replication and recovery are not implemented yet.
 - The HTTP control plane is unauthenticated and intended for trusted networks.
 
 [Unreleased]: https://github.com/msebasti15/distributed-event-bus/compare/v0.1.2...HEAD
-[0.1.3]: https://github.com/msebasti15/distributed-event-bus/releases/tag/v0.1.3
 [0.1.2]: https://github.com/msebasti15/distributed-event-bus/releases/tag/v0.1.2
 [0.1.1]: https://github.com/msebasti15/distributed-event-bus/releases/tag/v0.1.1
 [0.1.0]: https://github.com/msebasti15/distributed-event-bus/releases/tag/v0.1.0
