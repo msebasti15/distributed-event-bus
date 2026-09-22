@@ -5,6 +5,9 @@ An educational pub/sub event bus written from scratch in Go.
 See [Architecture Notes](docs/architecture.md) for the intended use cases,
 trade-offs, delivery guarantees, and evolution path.
 
+Project evolution is tracked in the [roadmap](docs/roadmap.md),
+[changelog](CHANGELOG.md), and [architecture decision records](docs/adr/).
+
 ## Current scope
 
 The first milestone implements the in-memory core:
