@@ -2,6 +2,9 @@
 
 An educational pub/sub event bus written from scratch in Go.
 
+See [Architecture Notes](docs/architecture.md) for the intended use cases,
+trade-offs, delivery guarantees, and evolution path.
+
 ## Current scope
 
 The first milestone implements the in-memory core:
