@@ -13,6 +13,14 @@ FAIL_AFTER_SECONDS="${FAIL_AFTER_SECONDS:-8}"
 DEMO_DIR="${DEMO_DIR:-$(mktemp -d /tmp/distributed-event-bus-demo.XXXXXX)}"
 PRIMARY_PID_FILE="$DEMO_DIR/primary.pid"
 
+echo "=== DEMO: abrupt broker failure and failover ==="
+echo "Purpose: recover from a TCP failure without a graceful shutdown event."
+echo "Topology: Producer + Consumer -> primary $PRIMARY_ADDRESS; standby $STANDBY_ADDRESS"
+echo "Trigger: primary receives SIGKILL after ${FAIL_AFTER_SECONDS}s."
+echo "Expected: ConnectionManager detects the broken socket and tries the standby."
+echo "Limit: without replication, events accepted only by the failed broker can be lost."
+echo
+
 if ! "$GO_BIN" version >/dev/null 2>&1; then
 	echo "Go is not usable through '$GO_BIN'." >&2
 	echo "Install a working Go toolchain or set GO_BIN=/path/to/go." >&2

@@ -11,6 +11,13 @@ MESSAGE_COUNT="${MESSAGE_COUNT:-30}"
 QUEUE_SIZE="${QUEUE_SIZE:-4}"
 CACHE_SIZE="${CACHE_SIZE:-1024}"
 
+echo "=== DEMO: bounded queues and delayed consumers ==="
+echo "Purpose: publish before consumers connect and observe cache replay."
+echo "Topology: Event Bus $ADDRESS -> Producer first -> three consumers later."
+echo "Configuration: delay=${DELAY_SECONDS}s messages=${MESSAGE_COUNT} queue=${QUEUE_SIZE} cache=${CACHE_SIZE}"
+echo "Expected: consumers receive cached events; queue/cache bounds limit memory."
+echo
+
 if ! "$GO_BIN" version >/dev/null 2>&1; then
 	echo "Go is not usable through '$GO_BIN'." >&2
 	echo "Install a working Go toolchain or set GO_BIN=/path/to/go." >&2

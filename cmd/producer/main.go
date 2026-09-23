@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -42,7 +44,12 @@ func main() {
 	}()
 
 	for sequence := 1; *count == 0 || sequence <= *count; sequence++ {
+		messageID, err := newMessageID()
+		if err != nil {
+			log.Fatal(err)
+		}
 		event := broker.Event{
+			ID:      messageID,
 			Topic:   *topic,
 			Key:     *key,
 			Payload: []byte(fmt.Sprintf("%s #%d", *payload, sequence)),
@@ -50,9 +57,17 @@ func main() {
 		if err := client.Publish(event); err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("published topic=%s key=%s payload=%q", event.Topic, event.Key, event.Payload)
+		log.Printf("published (broker ACK received) id=%s topic=%s key=%s payload=%q", event.ID, event.Topic, event.Key, event.Payload)
 		if *count == 0 || sequence < *count {
 			time.Sleep(*interval)
 		}
 	}
+}
+
+func newMessageID() (string, error) {
+	var data [16]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data[:]), nil
 }

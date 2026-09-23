@@ -7,6 +7,13 @@ ADDRESS="${EVENT_BUS_ADDRESS:-127.0.0.1:19000}"
 TOPIC="${EVENT_BUS_TOPIC:-events}"
 GO_BIN="${GO_BIN:-go}"
 
+echo "=== DEMO: basic pub/sub ==="
+echo "Purpose: publish one topic to three independent consumers."
+echo "Topology: Event Bus $ADDRESS -> Producer + Consumer A/B/C; topic=$TOPIC"
+echo "Expected: every consumer receives each published event."
+echo "Stop the terminals with Ctrl+C when finished."
+echo
+
 if ! "$GO_BIN" version >/dev/null 2>&1; then
 	echo "Go is not usable through '$GO_BIN'." >&2
 	echo "Install a working Go toolchain or run with GO_BIN=/path/to/go ./scripts/run-local.sh" >&2

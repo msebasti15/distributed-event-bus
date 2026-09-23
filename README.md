@@ -7,6 +7,10 @@ trade-offs, delivery guarantees, and evolution path.
 
 Project evolution is tracked in the [roadmap](docs/roadmap.md),
 [changelog](CHANGELOG.md), and [architecture decision records](docs/adr/).
+Performance expectations and measurement rules are documented in
+[Performance Principles](docs/performance.md).
+Idempotency and ordering strategies are described in
+[Idempotency, Versions, and Ordering](docs/idempotency.md).
 
 ## Current scope
 
@@ -15,6 +19,7 @@ The first milestone implements the in-memory core:
 - topic-based subscriptions;
 - fan-out to independent consumers;
 - bounded per-subscription queues;
+- message IDs, broker acknowledgements, and bounded deduplication;
 - bounded per-topic cache for events published without active consumers;
 - blocking and drop-on-full backpressure policies;
 - per-subscription publish ordering;
@@ -45,13 +50,60 @@ The project will later add retries, idempotency, failure handling, a distributed
 go test ./...
 ```
 
+Run the current microbenchmarks with allocations:
+
+```bash
+go test ./... -run '^$' -bench . -benchmem
+```
+
+Versioned benchmark results and the recording workflow are documented in
+[benchmarks/README.md](benchmarks/README.md).
+
+To demonstrate publish acknowledgements and duplicate detection:
+
+```bash
+./scripts/demo-ack-dedup.sh
+```
+
+To demonstrate consumer delivery acknowledgements and redelivery:
+
+```bash
+./scripts/demo-delivery-ack.sh
+```
+
+The consumer intentionally waits longer than the ACK timeout. The broker
+redelivers the same event, after which the consumer acknowledges it.
+
+## Demonstrations
+
+Every demonstration prints its purpose, topology, trigger, expected result,
+and known limitation before opening terminals.
+
+| Script | Scenario | Expected observation |
+|---|---|---|
+| `run-local.sh` | Basic fan-out | Every consumer receives each event. |
+| `run-delayed-consumers.sh` | Bounded queues and delayed consumers | Events are replayed from the in-memory cache. |
+| `test-cache-replay.sh` | Cache without active consumers | A later consumer receives cached events. |
+| `demo-ack-dedup.sh` | Producer/broker ACK | First publish is accepted; the repeat is duplicate. |
+| `demo-delivery-ack.sh` | Consumer delivery ACK | Missing ACK causes redelivery; consumer ACKs the broker. |
+| `demo-connection-manager.sh` | Graceful migration | Clients follow the broker redirect and resubscribe. |
+| `demo-abrupt-failover.sh` | Abrupt failure | Clients reconnect to the standby after SIGKILL. |
+
+The demos use separate localhost ports so they can be run independently. If a
+previous run is still active, stop its terminals or override the addresses with
+the corresponding environment variables.
+
 ## Run locally
 
 Start the broker:
 
 ```bash
-go run ./cmd/event-bus -listen 127.0.0.1:19000
+go run ./cmd/event-bus -listen 127.0.0.1:19000 -log-level debug
 ```
+
+The broker supports `error`, `warn`, `info` (default), and `debug` logging
+levels. Use `debug` during demonstrations to see connections, subscriptions,
+publish ACKs, deliveries, delivery retries, and consumer ACKs.
 
 In another terminal, start a consumer:
 

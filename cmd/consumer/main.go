@@ -42,7 +42,12 @@ func main() {
 			if !ok {
 				return
 			}
-			log.Printf("received topic=%s key=%s payload=%q", event.Topic, event.Key, event.Payload)
+			log.Printf("received id=%s topic=%s key=%s payload=%q", event.ID, event.Topic, event.Key, event.Payload)
+			if err := client.Acknowledge(event.ID); err != nil {
+				log.Printf("acknowledge id=%s: %v", event.ID, err)
+				continue
+			}
+			log.Printf("acknowledged id=%s to event bus", event.ID)
 		case redirect, ok := <-client.Shutdowns():
 			if !ok {
 				return

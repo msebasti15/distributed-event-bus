@@ -27,15 +27,18 @@ const (
 
 // Event is the unit transported by the broker. Payload is intentionally opaque.
 type Event struct {
-	Topic   string
-	Key     string
-	Payload []byte
+	ID             string
+	IdempotencyKey string
+	Topic          string
+	Key            string
+	Payload        []byte
 }
 
 // Config controls broker behavior.
 type Config struct {
 	QueueSize         int
 	CacheSize         int
+	DeduplicationSize int
 	Backpressure      BackpressurePolicy
 }
 
@@ -48,6 +51,7 @@ type Broker struct {
 	sequence uint64
 	topics   map[string]map[uint64]*Subscription
 	cache    map[string][]Event
+	dedup    map[string]map[string]struct{}
 }
 
 // State is a snapshot of broker activity.
@@ -85,10 +89,14 @@ func New(config Config) *Broker {
 	if config.CacheSize < 0 {
 		config.CacheSize = 0
 	}
+	if config.DeduplicationSize < 0 {
+		config.DeduplicationSize = 0
+	}
 	return &Broker{
 		config: config,
 		topics: make(map[string]map[uint64]*Subscription),
 		cache:  make(map[string][]Event),
+		dedup:  make(map[string]map[string]struct{}),
 	}
 }
 
@@ -134,14 +142,33 @@ func (b *Broker) BeginShutdown() {
 
 // Publish routes event to every current subscriber of event.Topic.
 func (b *Broker) Publish(ctx context.Context, event Event) error {
+	_, err := b.PublishWithResult(ctx, event)
+	return err
+}
+
+// PublishResult describes how the broker handled a message ID.
+type PublishResult int
+
+const (
+	Published PublishResult = 0
+	Duplicate PublishResult = 1
+)
+
+// PublishWithResult routes an event and reports whether its ID was already
+// accepted by this broker. IDs are deduplicated per topic.
+func (b *Broker) PublishWithResult(ctx context.Context, event Event) (PublishResult, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		return ErrClosed
+		return Published, ErrClosed
 	}
 	if b.draining {
 		b.mu.Unlock()
-		return ErrDraining
+		return Published, ErrDraining
+	}
+	if key := idempotencyKey(event); key != "" && b.seen(event.Topic, key) {
+		b.mu.Unlock()
+		return Duplicate, nil
 	}
 	subscribers := make([]*Subscription, 0, len(b.topics[event.Topic]))
 	for _, s := range b.topics[event.Topic] {
@@ -150,17 +177,52 @@ func (b *Broker) Publish(ctx context.Context, event Event) error {
 	policy := b.config.Backpressure
 	if len(subscribers) == 0 {
 		b.cacheEvent(event)
+		b.remember(event.Topic, idempotencyKey(event))
 		b.mu.Unlock()
-		return nil
+		return Published, nil
 	}
 	b.mu.Unlock()
 
 	for _, s := range subscribers {
 		if err := s.enqueue(ctx, event, policy); err != nil {
-			return err
+			return Published, err
 		}
 	}
-	return nil
+	b.mu.Lock()
+	b.remember(event.Topic, idempotencyKey(event))
+	b.mu.Unlock()
+	return Published, nil
+}
+
+func idempotencyKey(event Event) string {
+	if event.IdempotencyKey != "" {
+		return event.IdempotencyKey
+	}
+	return event.ID
+}
+
+func (b *Broker) seen(topic, id string) bool {
+	if id == "" || b.config.DeduplicationSize == 0 {
+		return false
+	}
+	_, exists := b.dedup[topic][id]
+	return exists
+}
+
+func (b *Broker) remember(topic, id string) {
+	if id == "" || b.config.DeduplicationSize == 0 {
+		return
+	}
+	if b.dedup[topic] == nil {
+		b.dedup[topic] = make(map[string]struct{})
+	}
+	if len(b.dedup[topic]) >= b.config.DeduplicationSize {
+		for oldest := range b.dedup[topic] {
+			delete(b.dedup[topic], oldest)
+			break
+		}
+	}
+	b.dedup[topic][id] = struct{}{}
 }
 
 // Drain waits until all currently queued events for the subscription are read,

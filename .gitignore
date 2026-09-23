@@ -4,6 +4,8 @@
 # Go build artifacts
 /bin/
 *.test
+coverage.out
+coverage.html
 
 # Local demo/build output
 *.log

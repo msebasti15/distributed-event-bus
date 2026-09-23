@@ -11,10 +11,16 @@ import (
 	"time"
 
 	"github.com/yourusername/distributed-event-bus/broker"
+	"github.com/yourusername/distributed-event-bus/logging"
 	"github.com/yourusername/distributed-event-bus/protocol"
 )
 
 var ErrNotConnected = errors.New("client must send CONNECT first")
+
+const (
+	deliveryAckTimeout  = 2 * time.Second
+	deliveryMaxAttempts = 3
+)
 
 // Server exposes a broker through the TCP wire protocol.
 type Server struct {
@@ -25,12 +31,16 @@ type Server struct {
 	draining bool
 	conns    map[*connection]struct{}
 	wg       sync.WaitGroup
+	logger   *logging.Logger
 }
 
 // NewServer creates a TCP server backed by b.
 func NewServer(b *broker.Broker) *Server {
-	return &Server{broker: b, conns: make(map[*connection]struct{})}
+	return &Server{broker: b, conns: make(map[*connection]struct{}), logger: logging.New(logging.LevelError, io.Discard)}
 }
+
+// SetLogger configures operational logging for the TCP server.
+func (s *Server) SetLogger(logger *logging.Logger) { s.logger = logger }
 
 // ListenAndServe listens on address and handles clients until Close is called.
 func (s *Server) ListenAndServe(address string) error {
@@ -63,6 +73,7 @@ func (s *Server) Serve(listener net.Listener) error {
 		}
 
 		state := newConnection(s, conn)
+		s.logger.Debugf("accepted TCP connection remote=%s", conn.RemoteAddr())
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -108,6 +119,7 @@ func (s *Server) Close() error {
 // GracefulShutdown stops accepting new connections and input messages, then
 // drains every active subscription before notifying clients and closing them.
 func (s *Server) GracefulShutdown(ctx context.Context, redirect string) error {
+	s.logger.Infof("graceful shutdown started redirect=%q", redirect)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -129,6 +141,11 @@ func (s *Server) GracefulShutdown(ctx context.Context, redirect string) error {
 
 	var drainWG sync.WaitGroup
 	for _, conn := range connections {
+		conn.mu.Lock()
+		if !conn.closed {
+			conn.draining = true
+		}
+		conn.mu.Unlock()
 		drainWG.Add(1)
 		go func(conn *connection) {
 			defer drainWG.Done()
@@ -137,8 +154,10 @@ func (s *Server) GracefulShutdown(ctx context.Context, redirect string) error {
 	}
 	drainWG.Wait()
 	if ctx.Err() != nil {
+		s.logger.Warnf("graceful shutdown timed out: %v", ctx.Err())
 		return ctx.Err()
 	}
+	s.logger.Infof("graceful shutdown completed")
 	return nil
 }
 
@@ -163,18 +182,21 @@ func (s *Server) removeConnection(conn *connection) {
 }
 
 type connection struct {
-	server *Server
-	net    net.Conn
-	write  sync.Mutex
-	mu     sync.Mutex
-	subs   map[string]*broker.Subscription
-	closed bool
-	draining bool
+	server     *Server
+	net        net.Conn
+	write      sync.Mutex
+	mu         sync.Mutex
+	subs       map[string]*broker.Subscription
+	closed     bool
+	draining   bool
+	deliveryMu sync.Mutex
 	deliveryWG sync.WaitGroup
+	ackMu      sync.Mutex
+	pendingAck map[string]chan byte
 }
 
 func newConnection(server *Server, conn net.Conn) *connection {
-	return &connection{server: server, net: conn, subs: make(map[string]*broker.Subscription)}
+	return &connection{server: server, net: conn, subs: make(map[string]*broker.Subscription), pendingAck: make(map[string]chan byte)}
 }
 
 func (c *connection) serve() {
@@ -192,6 +214,7 @@ func (c *connection) serve() {
 		_ = c.sendError(fmt.Errorf("invalid CONNECT payload: %w", err))
 		return
 	}
+	c.server.logger.Infof("client connected remote=%s", c.net.RemoteAddr())
 
 	for {
 		frame, err := protocol.ReadFrame(c.net)
@@ -204,7 +227,15 @@ func (c *connection) serve() {
 				_ = c.sendError(err)
 			}
 		case protocol.TypePublish:
+			if c.isDraining() {
+				_ = c.sendError(broker.ErrDraining)
+				continue
+			}
 			if err := c.publish(frame.Payload); err != nil {
+				_ = c.sendError(err)
+			}
+		case protocol.TypeAck:
+			if err := c.acknowledge(frame.Payload); err != nil {
 				_ = c.sendError(err)
 			}
 		case protocol.TypePing:
@@ -222,10 +253,16 @@ func (c *connection) subscribe(payload []byte) error {
 	if err != nil || message.Topic == "" {
 		return errors.New("invalid SUBSCRIBE payload")
 	}
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	if c.isDraining() {
+		return broker.ErrDraining
+	}
 	sub, err := c.server.broker.Subscribe(message.Topic)
 	if err != nil {
 		return err
 	}
+	c.server.logger.Infof("subscription created topic=%s remote=%s", message.Topic, c.net.RemoteAddr())
 	c.mu.Lock()
 	if old := c.subs[message.Topic]; old != nil {
 		_ = old.Close()
@@ -237,8 +274,7 @@ func (c *connection) subscribe(payload []byte) error {
 	go func() {
 		defer c.deliveryWG.Done()
 		for event := range sub.Events() {
-			payload, err := encodeEvent(event)
-			if err != nil || c.send(protocol.Frame{Type: protocol.TypeEvent, Payload: payload}) != nil {
+			if !c.deliver(event) {
 				return
 			}
 		}
@@ -247,9 +283,11 @@ func (c *connection) subscribe(payload []byte) error {
 }
 
 func (c *connection) abort() {
+	c.server.mu.Lock()
 	c.mu.Lock()
-	draining := c.draining
+	draining := c.draining || c.server.draining
 	c.mu.Unlock()
+	c.server.mu.Unlock()
 	if !draining {
 		c.close()
 	}
@@ -257,7 +295,7 @@ func (c *connection) abort() {
 
 func (c *connection) gracefulClose(ctx context.Context, redirect string) {
 	c.mu.Lock()
-	if c.closed || c.draining {
+	if c.closed {
 		c.mu.Unlock()
 		return
 	}
@@ -268,16 +306,15 @@ func (c *connection) gracefulClose(ctx context.Context, redirect string) {
 	}
 	c.mu.Unlock()
 
-	// Interrupt the input loop while keeping the socket available for outbound
-	// events until the subscription queues have drained.
-	_ = c.net.SetReadDeadline(time.Now())
 	for _, sub := range subs {
 		if err := sub.Drain(ctx); err != nil {
 			c.close()
 			return
 		}
 	}
+	c.deliveryMu.Lock()
 	c.deliveryWG.Wait()
+	c.deliveryMu.Unlock()
 	payload, err := encodeShutdown(shutdownMessage{Redirect: redirect})
 	if err == nil {
 		_ = c.send(protocol.Frame{Type: protocol.TypeShutdown, Payload: payload})
@@ -285,12 +322,96 @@ func (c *connection) gracefulClose(ctx context.Context, redirect string) {
 	c.closeTransport()
 }
 
+func (c *connection) isDraining() bool {
+	c.server.mu.Lock()
+	serverDraining := c.server.draining
+	c.server.mu.Unlock()
+	c.mu.Lock()
+	connectionDraining := c.draining
+	c.mu.Unlock()
+	return connectionDraining || serverDraining
+}
+
+func (c *connection) deliver(event broker.Event) bool {
+	payload, err := encodeEvent(event)
+	if err != nil {
+		return false
+	}
+	acknowledged := make(chan byte, 1)
+	c.ackMu.Lock()
+	c.pendingAck[event.ID] = acknowledged
+	c.ackMu.Unlock()
+	defer func() {
+		c.ackMu.Lock()
+		delete(c.pendingAck, event.ID)
+		c.ackMu.Unlock()
+	}()
+
+	for attempt := 1; attempt <= deliveryMaxAttempts; attempt++ {
+		c.server.logger.Debugf("delivering event id=%s topic=%s attempt=%d/%d remote=%s", event.ID, event.Topic, attempt, deliveryMaxAttempts, c.net.RemoteAddr())
+		if err := c.send(protocol.Frame{Type: protocol.TypeEvent, Payload: payload}); err != nil {
+			c.server.logger.Warnf("delivery failed id=%s: %v", event.ID, err)
+			return false
+		}
+		timer := time.NewTimer(deliveryAckTimeout)
+		select {
+		case status := <-acknowledged:
+			timer.Stop()
+			if status == ackDelivered {
+				c.server.logger.Debugf("delivery ACK received id=%s remote=%s", event.ID, c.net.RemoteAddr())
+				return true
+			}
+		case <-timer.C:
+			c.server.logger.Debugf("delivery ACK timeout id=%s attempt=%d", event.ID, attempt)
+		}
+	}
+	c.server.logger.Warnf("delivery abandoned after retries id=%s", event.ID)
+	return false
+}
+
+func (c *connection) acknowledge(payload []byte) error {
+	ack, err := decodeAck(payload)
+	if err != nil {
+		return err
+	}
+	c.ackMu.Lock()
+	acknowledged := c.pendingAck[ack.ID]
+	c.ackMu.Unlock()
+	if acknowledged == nil {
+		c.server.logger.Debugf("ACK ignored id=%s remote=%s", ack.ID, c.net.RemoteAddr())
+		return nil
+	}
+	c.server.logger.Debugf("ACK received id=%s status=%d remote=%s", ack.ID, ack.Status, c.net.RemoteAddr())
+	select {
+	case acknowledged <- ack.Status:
+	default:
+	}
+	return nil
+}
+
 func (c *connection) publish(payload []byte) error {
 	message, err := decodePublish(payload)
 	if err != nil || message.Topic == "" {
 		return errors.New("invalid PUBLISH payload")
 	}
-	return c.server.broker.Publish(context.Background(), broker.Event{Topic: message.Topic, Key: message.Key, Payload: message.Payload})
+	result, publishErr := c.server.broker.PublishWithResult(context.Background(), broker.Event{
+		ID: message.ID, IdempotencyKey: message.IdempotencyKey,
+		Topic: message.Topic, Key: message.Key, Payload: message.Payload,
+	})
+	ack := ackMessage{ID: message.ID, Status: ackPublished}
+	if result == broker.Duplicate {
+		ack.Status = ackDuplicate
+	}
+	if publishErr != nil {
+		ack.Status = ackRejected
+		ack.Error = publishErr.Error()
+	}
+	c.server.logger.Infof("publish handled id=%s topic=%s status=%d", message.ID, message.Topic, ack.Status)
+	ackPayload, err := encodeAck(ack)
+	if err != nil {
+		return err
+	}
+	return c.send(protocol.Frame{Type: protocol.TypeAck, Payload: ackPayload})
 }
 
 func (c *connection) unsubscribe(payload []byte) {
@@ -303,6 +424,7 @@ func (c *connection) unsubscribe(payload []byte) {
 	delete(c.subs, message.Topic)
 	c.mu.Unlock()
 	if sub != nil {
+		c.server.logger.Infof("subscription removed topic=%s remote=%s", message.Topic, c.net.RemoteAddr())
 		_ = sub.Close()
 	}
 }
@@ -338,6 +460,7 @@ func (c *connection) close() {
 		_ = sub.Close()
 	}
 	_ = c.net.Close()
+	c.server.logger.Debugf("connection closed remote=%s", c.net.RemoteAddr())
 }
 
 func (c *connection) closeTransport() {

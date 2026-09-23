@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yourusername/distributed-event-bus/broker"
+	"github.com/yourusername/distributed-event-bus/logging"
 	"github.com/yourusername/distributed-event-bus/transport/tcp"
 )
 
@@ -21,18 +21,26 @@ func main() {
 	address := flag.String("listen", ":9000", "TCP address to listen on")
 	queueSize := flag.Int("queue-size", 128, "per-consumer queue size")
 	cacheSize := flag.Int("cache-size", 1024, "per-topic cache size for events published without consumers")
+	deduplicationSize := flag.Int("deduplication-size", 4096, "number of recent message IDs retained for deduplication")
 	drop := flag.Bool("drop", false, "drop events when a consumer queue is full")
 	httpAddress := flag.String("http-listen", ":9001", "HTTP control address")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 30*time.Second, "maximum graceful shutdown duration")
 	redirect := flag.String("redirect", "", "replacement broker address announced during shutdown")
+	logLevel := flag.String("log-level", "info", "log level: error, warn, info, debug")
 	flag.Parse()
+	level, validLevel := logging.ParseLevel(*logLevel)
+	if !validLevel {
+		panic("invalid -log-level; use error, warn, info, or debug")
+	}
+	logger := logging.New(level, os.Stderr)
 
 	policy := broker.Block
 	if *drop {
 		policy = broker.Drop
 	}
-	bus := broker.New(broker.Config{QueueSize: *queueSize, CacheSize: *cacheSize, Backpressure: policy})
+	bus := broker.New(broker.Config{QueueSize: *queueSize, CacheSize: *cacheSize, DeduplicationSize: *deduplicationSize, Backpressure: policy})
 	server := tcp.NewServer(bus)
+	server.SetLogger(logger)
 	admin := &http.Server{Addr: *httpAddress}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +58,7 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 			defer cancel()
 			if err := server.GracefulShutdown(ctx, redirectAddress); err != nil {
-				log.Printf("graceful shutdown: %v", err)
+				logger.Errorf("graceful shutdown: %v", err)
 			}
 			_ = bus.Close()
 			_ = admin.Shutdown(context.Background())
@@ -74,7 +82,7 @@ func main() {
 	admin.Handler = mux
 	go func() {
 		if err := admin.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("http control server: %v", err)
+			logger.Errorf("http control server: %v", err)
 		}
 	}()
 
@@ -85,16 +93,23 @@ func main() {
 		triggerShutdown(*redirect)
 	}()
 
-	log.Printf("starting event bus on %s", *address)
+	logger.Infof("starting event bus tcp=%s http=%s queue_size=%d cache_size=%d deduplication_size=%d backpressure=%s log_level=%s", *address, *httpAddress, *queueSize, *cacheSize, *deduplicationSize, policyName(policy), *logLevel)
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ListenAndServe(*address) }()
 	if err := <-serverDone; err != nil {
-		log.Print(err)
+		logger.Errorf("TCP server: %v", err)
 		return
 	}
 	select {
 	case <-shutdownDone:
 	case <-time.After(*shutdownTimeout + time.Second):
-		log.Print("shutdown completion timeout")
+		logger.Errorf("shutdown completion timeout")
 	}
+}
+
+func policyName(policy broker.BackpressurePolicy) string {
+	if policy == broker.Drop {
+		return "drop"
+	}
+	return "block"
 }

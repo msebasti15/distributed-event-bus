@@ -46,7 +46,7 @@ func NewConnectionManager(ctx context.Context, endpoints []string, clientID stri
 }
 
 func (c *ConnectionManager) Events() <-chan broker.Event { return c.events }
-func (c *ConnectionManager) Shutdowns() <-chan string   { return c.shutdowns }
+func (c *ConnectionManager) Shutdowns() <-chan string    { return c.shutdowns }
 
 func (c *ConnectionManager) Subscribe(topic string) error {
 	c.mu.Lock()
@@ -59,7 +59,28 @@ func (c *ConnectionManager) Subscribe(topic string) error {
 	return client.Subscribe(topic)
 }
 
+// Acknowledge confirms that the consumer finished processing an event.
+func (c *ConnectionManager) Acknowledge(eventID string) error {
+	c.mu.RLock()
+	client := c.current
+	c.mu.RUnlock()
+	if client == nil {
+		return ErrNoBrokerAvailable
+	}
+	return client.Acknowledge(eventID)
+}
+
 func (c *ConnectionManager) Publish(event broker.Event) error {
+	if event.ID == "" {
+		id, err := newMessageID()
+		if err != nil {
+			return err
+		}
+		event.ID = id
+	}
+	if event.IdempotencyKey == "" {
+		event.IdempotencyKey = event.ID
+	}
 	for attempt := 0; attempt < 50; attempt++ {
 		c.mu.RLock()
 		client := c.current
@@ -121,7 +142,9 @@ func (c *ConnectionManager) connect(ctx context.Context) error {
 				break
 			}
 		}
-		if subscribed { return nil }
+		if subscribed {
+			return nil
+		}
 	}
 	return ErrNoBrokerAvailable
 }
@@ -183,28 +206,28 @@ func (c *ConnectionManager) watch(client *Client) (string, bool) {
 		select {
 		case event, ok := <-client.Events():
 			if !ok {
-				select {
-				case redirect, shutdownOK := <-client.Shutdowns():
-					if shutdownOK { return redirect, true }
-				default:
+				redirect, shutdownOK := <-client.Shutdowns()
+				if shutdownOK {
+					return redirect, true
 				}
 				return "", false
 			}
 			select {
 			case c.events <- event:
-			case <-c.done: return "", false
+			case <-c.done:
+				return "", false
 			}
 		case redirect, ok := <-client.Shutdowns():
-			if ok { return redirect, true }
+			if ok {
+				return redirect, true
+			}
 			return "", false
 		case <-client.Done():
-			// The client closes Done immediately after publishing SHUTDOWN.
-			// Drain the buffered notification before treating this as an abrupt
-			// failure, otherwise a controlled migration loses its redirect.
-			select {
-			case redirect, ok := <-client.Shutdowns():
-				if ok { return redirect, true }
-			default:
+			// Client closes Shutdowns after publishing a controlled redirect.
+			// Waiting here makes the graceful and abrupt paths deterministic.
+			redirect, ok := <-client.Shutdowns()
+			if ok {
+				return redirect, true
 			}
 			return "", false
 		case <-c.done:
@@ -224,7 +247,9 @@ func (c *ConnectionManager) reconnect(initial time.Duration) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		err := c.connect(ctx)
 		cancel()
-		if err == nil { return true }
+		if err == nil {
+			return true
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
@@ -232,7 +257,9 @@ func (c *ConnectionManager) reconnect(initial time.Duration) bool {
 			timer.Stop()
 			return false
 		}
-		if delay < 5*time.Second { delay *= 2 }
+		if delay < 5*time.Second {
+			delay *= 2
+		}
 	}
 }
 
@@ -241,7 +268,9 @@ func (c *ConnectionManager) prefer(endpoint string) {
 	defer c.mu.Unlock()
 	ordered := []string{endpoint}
 	for _, candidate := range c.endpoints {
-		if candidate != endpoint { ordered = append(ordered, candidate) }
+		if candidate != endpoint {
+			ordered = append(ordered, candidate)
+		}
 	}
 	c.endpoints = ordered
 }

@@ -138,6 +138,11 @@ The current implementation should be treated as:
 The target production-oriented model is likely to be **at-least-once delivery
 with idempotent consumers**, rather than promising exactly-once effects.
 
+Each event can carry both a `message_id` and an `idempotency_key`. The former
+identifies a message and correlates its ACK; the latter identifies the business
+operation that must not be applied more than once. Retries must preserve the
+same idempotency key.
+
 ## Evolution path
 
 The architecture can evolve in stages:

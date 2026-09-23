@@ -10,6 +10,13 @@ CACHE_SIZE="${CACHE_SIZE:-64}"
 MESSAGE_COUNT="${MESSAGE_COUNT:-10}"
 CONSUMER_DELAY_SECONDS="${CONSUMER_DELAY_SECONDS:-3}"
 
+echo "=== DEMO: cache replay ==="
+echo "Purpose: retain events published while a topic has no consumers."
+echo "Topology: Event Bus $ADDRESS -> Producer -> cache -> Consumer; topic=$TOPIC"
+echo "Expected: the consumer receives cached events after ${CONSUMER_DELAY_SECONDS}s."
+echo "Limit: cache is in-memory and is lost if the broker crashes."
+echo
+
 if ! "$GO_BIN" version >/dev/null 2>&1; then
 	echo "Go is not usable through '$GO_BIN'." >&2
 	echo "Install a working Go toolchain or set GO_BIN=/path/to/go." >&2

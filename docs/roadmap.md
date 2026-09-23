@@ -17,13 +17,18 @@ by dependency: correctness and observability come before distributed recovery.
 
 ## Next
 
-### v0.2 — Delivery reliability
+### v0.2 — Delivery reliability — in progress
 
-- Introduce a unique `message_id` on every event.
-- Add publish and delivery acknowledgements.
-- Define retry behavior and failure boundaries.
-- Add deduplication at the broker and consumer boundaries.
-- Document the exact at-least-once/at-most-once semantics.
+- [x] Introduce a unique `message_id` on every event.
+- [x] Add an explicit `idempotency_key` for safe retries.
+- [x] Add publish acknowledgements.
+- [x] Add bounded broker-side deduplication.
+- [x] Retry failed writes with the same message ID.
+- [x] Add consumer delivery acknowledgements.
+- [x] Define retry behavior and failure boundaries in more detail.
+- [x] Add bounded deduplication at the consumer boundary.
+- [x] Document idempotency, stale-version filtering, and ordered hold-and-release.
+- [x] Document the current at-least-once/at-most-once boundaries.
 
 ### v0.3 — Observability and performance
 
@@ -32,6 +37,7 @@ by dependency: correctness and observability come before distributed recovery.
 - Add structured logs and correlation IDs.
 - Add `pprof`, microbenchmarks, and sustained load tests.
 - Publish baseline throughput and latency results.
+- Keep benchmark results and allocation profiles with the release notes.
 
 ## Later
 

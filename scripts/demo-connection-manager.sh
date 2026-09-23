@@ -11,6 +11,14 @@ STANDBY_HTTP="${STANDBY_HTTP:-127.0.0.1:19101}"
 TOPIC="${EVENT_BUS_TOPIC:-failover-demo}"
 FAILOVER_AFTER_SECONDS="${FAILOVER_AFTER_SECONDS:-8}"
 
+echo "=== DEMO: graceful broker migration ==="
+echo "Purpose: move clients from a primary broker to a standby broker."
+echo "Topology: Producer + Consumer -> primary $PRIMARY_ADDRESS -> standby $STANDBY_ADDRESS"
+echo "Trigger: HTTP graceful shutdown after ${FAILOVER_AFTER_SECONDS}s with redirect."
+echo "Expected: clients reconnect, prefer the redirect, and resubscribe."
+echo "Limit: standby brokers do not replicate primary state yet."
+echo
+
 if ! "$GO_BIN" version >/dev/null 2>&1; then
 	echo "Go is not usable through '$GO_BIN'." >&2
 	echo "Install a working Go toolchain or set GO_BIN=/path/to/go." >&2
