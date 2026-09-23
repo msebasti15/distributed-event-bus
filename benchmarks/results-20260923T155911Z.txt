@@ -1,0 +1,42 @@
+Distributed Event Bus benchmark result
+timestamp_utc=20260923T155911Z
+commit=43ef5eb4d15690baad916ae49162ebad12b83182
+go_version=go version go1.27.1 linux/amd64
+virtualization=vmware
+os=Ubuntu 26.04 LTS
+kernel=Linux 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:26:38 UTC 2026 x86_64 GNU/Linux
+cpu_model=Intel(R) Core(TM) i9-14900HX
+cpu_count=12
+memory=16Gi
+hypervisor=VMware
+machine=VMware Virtual Platform
+command=go test ./... -run '^$' -bench . -benchmem
+
+goos: linux
+goarch: amd64
+pkg: github.com/yourusername/distributed-event-bus/broker
+cpu: Intel(R) Core(TM) i9-14900HX
+BenchmarkPublishWithoutSubscribers-12      	40418247	        26.39 ns/op	 265.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPublishToOneSubscriber-12         	 7455228	       159.9 ns/op	  43.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPublishFanoutTenSubscribers-12    	  906346	      1446 ns/op	   4.84 MB/s	      80 B/op	       1 allocs/op
+BenchmarkDuplicateMessageID-12             	39567512	        28.63 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUniqueMessageIDs-12               	 4051320	       396.0 ns/op	     142 B/op	       3 allocs/op
+PASS
+ok  	github.com/yourusername/distributed-event-bus/broker	6.895s
+?   	github.com/yourusername/distributed-event-bus/cmd/ack-demo	[no test files]
+?   	github.com/yourusername/distributed-event-bus/cmd/consumer	[no test files]
+?   	github.com/yourusername/distributed-event-bus/cmd/delivery-ack-demo	[no test files]
+?   	github.com/yourusername/distributed-event-bus/cmd/event-bus	[no test files]
+?   	github.com/yourusername/distributed-event-bus/cmd/producer	[no test files]
+?   	github.com/yourusername/distributed-event-bus/logging	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/yourusername/distributed-event-bus/protocol
+cpu: Intel(R) Core(TM) i9-14900HX
+BenchmarkFrameRoundTrip-12    	 4060827	       290.8 ns/op	 880.45 MB/s	     666 B/op	       6 allocs/op
+BenchmarkWriteFrame-12        	68862310	        16.78 ns/op	15260.01 MB/s	       5 B/op	       1 allocs/op
+BenchmarkReadFrame-12         	 9204794	       129.8 ns/op	1971.88 MB/s	     309 B/op	       3 allocs/op
+PASS
+ok  	github.com/yourusername/distributed-event-bus/protocol	3.993s
+PASS
+ok  	github.com/yourusername/distributed-event-bus/transport/tcp	0.003s
